@@ -108,30 +108,42 @@ async def process_queue_item(item: QueueItem):
                 encoded_files[quality] = output_path
                 print(f"Successfully encoded {quality}")
 
-                # Get media info before upload
+                # Get media info and upload to Telegraph
                 info = media_info.get_media_info(output_path)
-                info_text = media_info.format_info(info, file_size, os.path.getsize(output_path)/(1024*1024))
+                telegraph_url = await media_info.upload_to_telegraph(
+                    info, input_file, output_path
+                )
                 
-                # Upload media info to graph.org
-                graph_url = await media_info.upload_to_graph(info_text)
-                
-                # Generate new filename
+                # Generate filename with correct details
                 new_name = renamer.generate_filename(os.path.basename(downloaded_file), quality)
                 
-                # Update caption with media info
+                # Update caption format
                 caption = (
-                    f"✅ <b>{new_name}</b>\n\n"
-                    f"{info_text}\n\n"
-                    f"📋 Detailed Info: {graph_url}"
+                    f"✅ {new_name}\n\n"
+                    f"📊 Media Info\n\n"
+                    f"<b>General</b>\n"
+                    f"Format: {info['general'].get('format', 'N/A')}\n"
+                    f"Quality: {quality}\n"
+                    f"Duration: {info['general'].get('duration', 'N/A')}\n\n"
+                    f"<b>Video</b>\n"
+                    f"Codec: {info['video'].get('codec', 'N/A')}\n"
+                    f"Resolution: {info['video'].get('resolution', 'N/A')}\n"
+                    f"FPS: {info['video'].get('fps', 'N/A')}\n"
+                    f"Bitrate: {info['video'].get('bitrate', 'N/A')}\n\n"
+                    f"<b>Size</b>\n"
+                    f"Before: {file_size:.2f} MB\n"
+                    f"After: {os.path.getsize(output_path)/(1024*1024):.2f} MB\n"
+                    f"Saved: {((file_size-os.path.getsize(output_path)/(1024*1024))/file_size)*100:.1f}%"
                 )
 
-                # Upload with new name
+                # Upload with new parameters
                 await Uploader.upload_video(
                     item.message._client,
                     item.message.chat.id,
                     output_path,
                     caption=caption,
                     filename=new_name,
+                    telegraph_url=telegraph_url,
                     progress_callback=progress_tracker.update_progress
                 )
                 

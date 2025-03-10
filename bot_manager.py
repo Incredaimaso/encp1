@@ -26,6 +26,8 @@ class BotManager:
             bot_token=Config.BOT_TOKEN
         )
         self.setup_handlers()
+        self.max_retries = 3
+        self.retry_delay = 5
     
     def setup_handlers(self):
         # Command handlers
@@ -35,14 +37,26 @@ class BotManager:
         self.app.on_message(filters.command("l"))(self.handlers.download_handler)
     
     async def start(self):
-        async with self.app:
-            print("Bot is starting...")
-            await self.app.send_message(
-                Config.OWNER_ID,
-                "🤖 Bot is Online!\n"
-                f"Owner ID: {Config.OWNER_ID}\n"
-                "Send /help for available commands"
-            )
-            # Replace idle() with infinite loop
-            while True:
-                await asyncio.sleep(1)
+        for attempt in range(self.max_retries):
+            try:
+                async with self.app:
+                    print("Bot is starting...")
+                    await self.app.send_message(
+                        Config.OWNER_ID,
+                        "🤖 Bot is Online!\n"
+                        f"Owner ID: {Config.OWNER_ID}\n"
+                        "Send /help for available commands"
+                    )
+                    while True:
+                        try:
+                            await asyncio.sleep(1)
+                        except ConnectionResetError:
+                            print("Connection reset, reconnecting...")
+                            await asyncio.sleep(self.retry_delay)
+                            break
+            except Exception as e:
+                print(f"Bot connection error (attempt {attempt + 1}/{self.max_retries}): {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                raise

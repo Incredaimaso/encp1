@@ -6,3 +6,5 @@ ffmpeg-python
 anitopy
 pymediainfo
 aiohttp>=3.8.0
+telegraph
+backoff>=2.2.1

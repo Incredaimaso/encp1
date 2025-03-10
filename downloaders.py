@@ -5,6 +5,7 @@ import os
 import asyncio
 import time
 import re
+import backoff  # Add to requirements.txt
 
 class Downloader:
     def __init__(self, aria2_host: str, aria2_port: int, aria2_secret: str):
@@ -16,6 +17,10 @@ class Downloader:
         self.aria2 = None
         self.SUPPORTED_FORMATS = ['.mkv', '.mp4', '.avi', '.webm']
         self.setup_aria2()
+        self.max_connection_retries = 5
+        self.connection_retry_delay = 5
+        self.max_reconnect_attempts = 5
+        self.reconnect_delay = 3
     
     def setup_aria2(self):
         try:
@@ -113,17 +118,29 @@ class Downloader:
 
         return False
 
-    async def download_aria2(self, url: str, progress_callback, download_dir) -> Tuple[str, float]:
+    @backoff.on_exception(
+        backoff.expo,
+        (ConnectionError, ConnectionResetError),
+        max_tries=5,
+        giveup=lambda e: "not found" in str(e).lower()
+    )
+    async def _safe_download_call(self, func, *args, **kwargs):
         try:
-            if not self.aria2:
-                if not self.setup_aria2():
-                    raise Exception("Could not establish aria2 connection")
+            return await func(*args, **kwargs)
+        except (ConnectionError, ConnectionResetError) as e:
+            print(f"Connection error: {e}, attempting to reconnect...")
+            if self.setup_aria2():
+                return await func(*args, **kwargs)
+            raise
 
-            print(f"Starting download in {download_dir}")
-            download_dir = os.path.abspath(download_dir)
-            
-            # Clean any existing downloads with same hash
-            if url.startswith('magnet:'):
+    async def download_aria2(self, url: str, progress_callback, download_dir) -> Tuple[str, float]:
+        for attempt in range(self.max_reconnect_attempts):
+            try:
+                if not self.aria2:
+                    if not self.setup_aria2():
+                        raise Exception("Could not establish aria2 connection")
+
+                # Clean existing downloads
                 try:
                     downloads = self.aria2.get_downloads()
                     for download in downloads:
@@ -133,114 +150,102 @@ class Downloader:
                 except Exception as e:
                     print(f"Error cleaning downloads: {e}")
 
-            options = {
-                'dir': download_dir,
-                'max-connection-per-server': 16,
-                'split': 16,
-                'seed-time': 0,
-                'bt-stop-timeout': 100,
-                'follow-torrent': True,
-                'bt-tracker-connect-timeout': 10,
-                'bt-max-peers': 0,
-                'max-download-limit': '0',
-                'allow-overwrite': True,
-                'auto-file-renaming': False
-            }
-            
-            print(f"Adding download: {url[:100]}...")
-            download = self.aria2.add_uris([url], options=options)
-            gid = download.gid
-            print(f"Download started with GID: {gid}")
+                options = {
+                    'dir': os.path.abspath(download_dir),
+                    'max-connection-per-server': 16,
+                    'split': 16,
+                    'seed-time': 0,
+                    'bt-stop-timeout': 100,
+                    'follow-torrent': True,
+                    'bt-tracker-connect-timeout': 10,
+                    'bt-max-peers': 0,
+                    'max-download-limit': '0',
+                    'allow-overwrite': True,
+                    'auto-file-renaming': False,
+                    'continue': True,
+                    'max-tries': 5,
+                    'retry-wait': 5,
+                    'connect-timeout': 30,
+                    'timeout': 30,
+                    'piece-length': '1M'
+                }
 
-            timeout = 600  # 10 minutes timeout
-            start_time = time.time()
-            last_size = 0
-            stall_count = 0
-
-            if url.startswith('magnet:'):
-                await progress_callback(0, 100, "🔍 Getting metadata...")
-                # Wait for metadata
-                metadata_timeout = 60  # 1 minute timeout for metadata
-                metadata_start = time.time()
-                
-                while True:
-                    if time.time() - metadata_start > metadata_timeout:
-                        raise Exception("Metadata fetch timeout")
+                if url.startswith('magnet:'):
+                    # Special handling for magnet links
+                    await progress_callback(0, 100, "🧲 Initializing magnet download...")
                     
-                    await asyncio.sleep(1)
-                    download.update()
+                    download = await self._safe_download_call(
+                        self.aria2.add_magnet, url, options=options
+                    )
                     
-                    if download.followed_by_ids:
-                        print("Metadata received, starting main download...")
-                        # Switch to the main download
-                        download = self.aria2.get_download(download.followed_by_ids[0])
-                        break
-                    
-                    if download.status == 'error':
-                        raise Exception(f"Metadata download failed: {download.error_message}")
-                    
-                    await progress_callback(0, 100, 
-                        f"🔍 Getting metadata...\n"
-                        f"🌐 Connected to {download.connections} peers\n"
-                        f"⏳ Time elapsed: {int(time.time() - metadata_start)}s"
+                    # Wait for metadata
+                    metadata_timeout = 60
+                    metadata_start = time.time()
+                    while time.time() - metadata_start < metadata_timeout:
+                        try:
+                            await self._safe_download_call(download.update)
+                            if download.has_failed:
+                                raise Exception("Magnet download failed")
+                            if download.followed_by_ids:
+                                download = self.aria2.get_download(download.followed_by_ids[0])
+                                print("Metadata received, starting download...")
+                                break
+                            await progress_callback(0, 100, 
+                                f"🔍 Getting metadata...\n"
+                                f"🌐 Connected peers: {download.connections}\n"
+                                f"⏳ Timeout in: {int(metadata_timeout-(time.time()-metadata_start))}s"
+                            )
+                        except Exception as e:
+                            print(f"Metadata update error: {e}")
+                        await asyncio.sleep(1)
+                else:
+                    download = await self._safe_download_call(
+                        self.aria2.add_uris, [url], options=options
                     )
 
-            # Main download loop
-            last_status_update = 0
-            while True:
-                await asyncio.sleep(0.5)
-                try:
-                    download.update()
-                    current_time = time.time()
-                    
-                    # Update status every second
-                    if current_time - last_status_update >= 1:
-                        downloaded = download.completed_length
-                        total = download.total_length
+                # Monitor download
+                last_update = 0
+                while True:
+                    try:
+                        await self._safe_download_call(download.update)
                         
-                        if total > 0:
-                            progress = (downloaded / total) * 100
-                            speed = download.download_speed
-                            eta = (total - downloaded) / speed if speed > 0 else 0
+                        if download.has_failed:
+                            raise Exception(f"Download failed: {download.error_message}")
                             
-                            status_text = (
-                                f"⬇️ Downloading file\n"
-                                f"📊 Progress: {progress:.1f}%\n"
-                                f"📦 Size: {downloaded/(1024*1024):.1f}MB / {total/(1024*1024):.1f}MB\n"
-                                f"🚀 Speed: {self._format_speed(speed)}\n"
-                                f"⏱️ ETA: {self._format_eta(eta)}\n"
-                                f"📡 Peers: {download.connections}"
+                        if download.is_complete:
+                            file_path = os.path.join(
+                                download_dir,
+                                os.path.basename(download.files[0].path)
                             )
-                            await progress_callback(downloaded, total, status_text)
-                            last_status_update = current_time
-
-                    if download.status == 'complete':
-                        print("Download marked as complete")
-                        # Get file immediately
-                        file_path = os.path.join(
-                            download_dir,
-                            os.path.basename(download.files[0].path)
-                        )
+                            if await self._verify_file(file_path):
+                                return file_path, os.path.getsize(file_path)/(1024*1024)
+                            
+                        # Progress update
+                        if time.time() - last_update >= 1:
+                            total = download.total_length
+                            completed = download.completed_length
+                            if total > 0:
+                                await progress_callback(completed, total,
+                                    f"⬇️ Downloading: {download.name}\n"
+                                    f"📊 Progress: {(completed/total)*100:.1f}%\n"
+                                    f"⚡ Speed: {self._format_speed(download.download_speed)}\n"
+                                    f"🌐 Peers: {download.connections}"
+                                )
+                            last_update = time.time()
+                            
+                    except (ConnectionError, ConnectionResetError) as e:
+                        print(f"Connection error: {e}, retrying...")
+                        await asyncio.sleep(self.reconnect_delay)
+                        continue
                         
-                        # Wait for file to be fully written
-                        for i in range(30):  # 30 seconds timeout
-                            if os.path.exists(file_path):
-                                size = os.path.getsize(file_path)
-                                if size > 0 and not os.path.exists(f"{file_path}.aria2"):
-                                    print(f"Download completed: {file_path} ({size/(1024*1024):.1f}MB)")
-                                    return file_path, size/(1024*1024)
-                            await progress_callback(1, 1, f"⌛ Finalizing download... ({i+1}/30)")
-                            await asyncio.sleep(1)
-                        
-                        raise Exception("File verification failed")
+                    await asyncio.sleep(1)
 
-                except Exception as e:
-                    print(f"Status check error: {str(e)}")
-                    raise
-
-        except Exception as e:
-            print(f"Download error: {str(e)}")
-            raise
+            except Exception as e:
+                print(f"Download attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_reconnect_attempts - 1:
+                    await asyncio.sleep(self.reconnect_delay)
+                    continue
+                raise
 
     def _format_speed(self, speed: int) -> str:
         units = ['B/s', 'KB/s', 'MB/s', 'GB/s']

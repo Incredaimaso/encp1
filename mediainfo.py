@@ -2,10 +2,14 @@ import aiohttp
 import json
 from pymediainfo import MediaInfo
 from typing import Dict, Optional
+import telegraph
+import os
 
 class MediaInfoGenerator:
     def __init__(self):
         self.graph_api = "https://graph.org/api/upload"
+        self.telegraph = telegraph.Telegraph()
+        self.telegraph.create_account(short_name='AnimeEncoderBot')
         
     def get_media_info(self, file_path: str) -> Dict:
         media_info = MediaInfo.parse(file_path)
@@ -65,6 +69,43 @@ class MediaInfoGenerator:
         except Exception as e:
             print(f"Graph upload error: {e}")
         return None
+
+    async def upload_to_telegraph(self, media_info: Dict, input_path: str, output_path: str) -> Optional[str]:
+        try:
+            html_content = f"""
+            <h3>📊 Detailed Media Information</h3>
+            <p><b>File:</b> {os.path.basename(output_path)}</p>
+            
+            <h4>General Info</h4>
+            <p>Format: {media_info['general'].get('format', 'N/A')}<br>
+            Duration: {media_info['general'].get('duration', 'N/A')}<br>
+            Container: {media_info['general'].get('container', 'N/A')}</p>
+            
+            <h4>Video Stream</h4>
+            <p>Codec: {media_info['video'].get('codec', 'N/A')}<br>
+            Resolution: {media_info['video'].get('resolution', 'N/A')}<br>
+            FPS: {media_info['video'].get('fps', 'N/A')}<br>
+            Bitrate: {media_info['video'].get('bitrate', 'N/A')}</p>
+            
+            <h4>Audio Stream</h4>
+            <p>Codec: {media_info['audio'].get('codec', 'N/A')}<br>
+            Channels: {media_info['audio'].get('channels', 'N/A')}<br>
+            Bitrate: {media_info['audio'].get('bitrate', 'N/A')}</p>
+            
+            <h4>Encoding Info</h4>
+            <p>Original Size: {os.path.getsize(input_path)/(1024*1024):.2f} MB<br>
+            Encoded Size: {os.path.getsize(output_path)/(1024*1024):.2f} MB<br>
+            Compression: {(1 - os.path.getsize(output_path)/os.path.getsize(input_path))*100:.1f}%</p>
+            """
+
+            response = await self.telegraph.create_page(
+                title=f"Media Info - {os.path.basename(output_path)}",
+                html_content=html_content
+            )
+            return f"https://telegra.ph/{response['path']}"
+        except Exception as e:
+            print(f"Telegraph upload error: {e}")
+            return None
 
     def format_info(self, info: Dict, original_size: float, new_size: float) -> str:
         template = (
