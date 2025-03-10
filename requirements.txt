@@ -1,0 +1,8 @@
+pyrofork
+tgcrypto-pyrofork
+python-dotenv
+aria2p
+ffmpeg-python
+anitopy
+pymediainfo
+aiohttp>=3.8.0
