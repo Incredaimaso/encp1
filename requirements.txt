@@ -2,9 +2,10 @@ pyrofork
 tgcrypto-pyrofork
 python-dotenv
 aria2p
-ffmpeg-python
+ffmpeg-python>=0.2.0
 anitopy
 pymediainfo
 aiohttp>=3.8.0
 telegraph
 backoff>=2.2.1
+psutil>=5.8.0  # For CPU monitoring

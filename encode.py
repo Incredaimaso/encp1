@@ -3,6 +3,7 @@ import os
 import time
 import asyncio
 from typing import Dict, Tuple
+from cpu_encoder import CPUEncoder
 
 class VideoEncoder:
     def __init__(self):
@@ -33,6 +34,19 @@ class VideoEncoder:
             'rc': 'vbr_hq',  # Better quality VBR mode
             'rc-lookahead': 32
         }
+        self.cpu_encoder = CPUEncoder()
+        self.gpu_available = self._check_gpu()
+    
+    def _check_gpu(self) -> bool:
+        try:
+            # Try to run a small GPU encode test
+            test_input = ffmpeg.input('testsrc=duration=1:size=64x64', f='lavfi')
+            test_output = ffmpeg.output(test_input, '-', c='h264_nvenc')
+            ffmpeg.run(test_output, capture_stdout=True, capture_stderr=True)
+            return True
+        except ffmpeg.Error:
+            print("NVIDIA GPU not available, falling back to CPU encoding")
+            return False
 
     def _calculate_encoding_params(self, target_size: int, duration: float) -> dict:
         # Calculate bitrate in kbps
@@ -86,6 +100,11 @@ class VideoEncoder:
     async def encode_video(self, input_file: str, output_file: str, 
                           target_size: int, resolution: str,
                           progress_callback=None) -> Tuple[str, Dict]:
+        if not self.gpu_available:
+            return await self.cpu_encoder.encode_video(
+                input_file, output_file, target_size, resolution, progress_callback
+            )
+            
         # Verify input file first
         if not await self._verify_file(input_file):
             raise Exception("Input file verification failed")
