@@ -40,12 +40,16 @@ class Config:
     }
     
     # Bot settings
-    DEFAULT_PARSE_MODE = "markdown2"  # Updated for newer Pyrogram
+    DEFAULT_PARSE_MODE = None  # Disable parse mode
     MESSAGE_TEMPLATES = {
-        'welcome': "**Welcome to Video Encoder Bot!**\n"  # Updated markdown2 syntax
-                  "Send me a video or use `/l` to download and encode.",
-        'help': "**Available Commands:**\n"  # Updated markdown2 syntax
-               "`/l <url>` - Download and encode video\n"
-               "`/add <user_id>` - Add approved user (owner only)",
-        'error': "❌ **Error:** `{}`"  # Updated markdown2 syntax
+        'welcome': (
+            "Welcome to Video Encoder Bot!\n"
+            "Send me a video or use /l to download and encode."
+        ),
+        'help': (
+            "Available Commands:\n"
+            "/l <url> - Download and encode video\n"
+            "/add <user_id> - Add approved user (owner only)"
+        ),
+        'error': "❌ Error: {}"
     }
