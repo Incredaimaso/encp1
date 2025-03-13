@@ -16,6 +16,8 @@ from encode import VideoEncoder
 import time
 from pyrogram.errors import FloodWait
 import os
+from datetime import datetime
+import pytz
 
 class BotManager:
     def __init__(self, process_func):
@@ -38,6 +40,8 @@ class BotManager:
         self.db_timeout = 30  # Database timeout in seconds
         self.session_file = "video_encoder_bot.session"
         self.parse_mode = enums.ParseMode.DISABLED  # Changed from markdown2
+        self.timezone = pytz.timezone('Asia/Kolkata')
+        self.log_channel = Config.LOG_CHANNEL
     
     def setup_handlers(self):
         # Command handlers
@@ -95,6 +99,24 @@ class BotManager:
                 await asyncio.sleep(self.reconnect_delay)
         return False
 
+    async def _send_startup_message(self):
+        try:
+            current_time = datetime.now(self.timezone)
+            formatted_time = current_time.strftime("%d-%m-%Y %I:%M:%S %p")
+            
+            startup_msg = (
+                "🤖 Bot Restarted Successfully!\n\n"
+                f"🕒 Time: {formatted_time} (IST)\n"
+                "✨ Status: Online and Ready"
+            )
+            
+            if self.log_channel:
+                await self.app.send_message(self.log_channel, startup_msg)
+            
+            print(f"\n{startup_msg}\n")
+        except Exception as e:
+            print(f"Failed to send startup message: {e}")
+
     async def _init_session(self):
         try:
             async with self.session_lock:
@@ -109,6 +131,7 @@ class BotManager:
                 self.setup_app()
                 await self.app.start()
                 self.session_active = True
+                await self._send_startup_message()  # Send startup notification
                 print("📡 Bot session initialized")
                 return True
         except Exception as e:

@@ -9,3 +9,5 @@ aiohttp>=3.8.0
 telegraph
 backoff>=2.2.1
 psutil>=5.8.0  # For CPU monitoring
+pytz>=2023.3  # For timezone handling
+websockets
