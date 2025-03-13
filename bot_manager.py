@@ -37,7 +37,7 @@ class BotManager:
         self.session_lock = asyncio.Lock()
         self.db_timeout = 30  # Database timeout in seconds
         self.session_file = "video_encoder_bot.session"
-        self.parse_mode = "markdown"  # Default parse mode for messages
+        self.parse_mode = "markdown2"  # Updated parse mode for newer Pyrogram
     
     def setup_handlers(self):
         # Command handlers
@@ -54,7 +54,7 @@ class BotManager:
                 api_id=Config.API_ID,
                 api_hash=Config.API_HASH,
                 bot_token=Config.BOT_TOKEN,
-                parse_mode=self.parse_mode  # Set parse mode during initialization
+                parse_mode=self.parse_mode  # Use markdown2
             )
             self.setup_handlers()
 
