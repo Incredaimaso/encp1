@@ -82,7 +82,7 @@ class CPUEncoder:
                     'loglevel': 'error'
                 }
             )
-            
+
             # Start encoding with process management
             process = ffmpeg.run_async(
                 stream,
