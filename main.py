@@ -13,7 +13,6 @@ from display import ProgressTracker
 from config import Config
 from pathlib import Path
 from renamer import VideoRenamer
-from mediainfo import MediaInfoGenerator
 
 DOWNLOADS_DIR = "downloads"
 ENCODES_DIR = "encodes"
@@ -43,140 +42,182 @@ def cleanup_directories():
             os.makedirs(directory)
 
 async def process_queue_item(item: QueueItem):
-    status_message = await item.message.reply_text("⏳ Processing...")
-    progress_tracker = ProgressTracker(lambda text: status_message.edit_text(text))
-    encoder = VideoEncoder()
-    downloader = Downloader(Config.ARIA2_HOST, Config.ARIA2_PORT, Config.ARIA2_SECRET)
-    renamer = VideoRenamer()
-    media_info = MediaInfoGenerator()
-    downloaded_file = None
-    encoded_files = {}
-    encoding_status = {q: "⏳ Pending" for q in Config.QUALITIES}
-
+    retries = 3
+    status_message = None
+    encoder = None
+    
     try:
-        # Download phase
-        if item.is_url:
-            await status_message.edit_text("⬇️ Starting download...")
-            downloaded_file, file_size = await downloader.download_aria2(
-                item.file_path,
-                progress_tracker.update_progress,
-                DOWNLOADS_DIR
-            )
-            print(f"Downloaded file: {downloaded_file} ({file_size:.1f}MB)")
-            
-            if file_size > 1500:
-                raise Exception("File too large (max: 1.5GB)")
-                
-            await status_message.edit_text(
-                "🎬 Encoding Queue:\n" + 
-                "\n".join(f"{q}: {encoding_status[q]}" for q in Config.QUALITIES)
-            )
-        else:
-            downloaded_file = item.file_path
-            file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
-
-        # Process each quality
-        for quality in Config.QUALITIES:
+        for attempt in range(retries):
             try:
-                encoding_status[quality] = "🔄 Processing"
-                await status_message.edit_text(
-                    "🎬 Encoding Status:\n" + 
-                    "\n".join(f"{q}: {encoding_status[q]}" for q in Config.QUALITIES)
-                )
-
-                # Use cached source for higher qualities
-                input_file = downloaded_file
-                if quality in ['720p', '1080p'] and '480p' in encoded_files:
-                    input_file = downloaded_file  # Use original for better quality
+                if not status_message:
+                    status_message = await item.message.reply_text(
+                        f"⏳ Processing task {item.task_id}...\n"
+                        f"Use /cancel {item.task_id} to stop this task"
+                    )
                 
-                output_path = os.path.join(
-                    ENCODES_DIR,
-                    f"encoded_{quality}_{os.path.basename(downloaded_file)}"
-                )
+                progress_tracker = ProgressTracker(lambda text: status_message.edit_text(text))
+                downloader = Downloader(Config.ARIA2_HOST, Config.ARIA2_PORT, Config.ARIA2_SECRET)
 
-                # Encode
-                print(f"Starting {quality} encode...")
-                _, process = await encoder.encode_video(
-                    input_file, output_path,
-                    Config.TARGET_SIZES[quality], quality,
-                    progress_tracker.update_progress
-                )
+                # Download phase
+                downloaded_file = None
+                try:
+                    if item.is_url:
+                        try:
+                            await status_message.edit_text("⬇️ Starting download...")
+                            downloaded_file, file_size = await downloader.download_aria2(
+                                item.file_path,
+                                progress_tracker.update_progress,
+                                DOWNLOADS_DIR
+                            )
+                            
+                            # Explicit verification
+                            if not os.path.exists(downloaded_file):
+                                raise Exception("Download verification failed")
+                            
+                            actual_size = os.path.getsize(downloaded_file) / (1024 * 1024)
+                            await status_message.edit_text(
+                                f"✅ Download complete!\n"
+                                f"📁 File: {os.path.basename(downloaded_file)}\n"
+                                f"📦 Size: {actual_size:.1f}MB\n"
+                                "🎬 Starting encode..."
+                            )
+                            
+                            if actual_size > 1900:
+                                raise Exception("File too large (max: 1.9GB)")
 
-                if process.returncode != 0:
-                    raise Exception(f"Encoding failed for {quality}")
+                        except Exception as e:
+                            if downloaded_file and os.path.exists(downloaded_file):
+                                os.remove(downloaded_file)
+                            raise Exception(f"Download failed: {str(e)}")
+                    else:
+                        downloaded_file = item.file_path
+                        actual_size = os.path.getsize(downloaded_file) / (1024 * 1024)
 
-                encoded_files[quality] = output_path
-                print(f"Successfully encoded {quality}")
+                    # Initialize encoder once
+                    if not encoder:
+                        encoder = VideoEncoder()
+        
+                    for quality in Config.QUALITIES:
+                        if item.cancel_flag:
+                            break
 
-                # Get media info and upload to Telegraph
-                info = media_info.get_media_info(output_path)
-                telegraph_url = await media_info.upload_to_telegraph(
-                    info, input_file, output_path
-                )
-                
-                # Generate filename with correct details
-                new_name = renamer.generate_filename(os.path.basename(downloaded_file), quality)
-                
-                # Update caption format
-                caption = (
-                    f"✅ {new_name}\n\n"
-                    f"📊 Media Info\n\n"
-                    f"<b>General</b>\n"
-                    f"Format: {info['general'].get('format', 'N/A')}\n"
-                    f"Quality: {quality}\n"
-                    f"Duration: {info['general'].get('duration', 'N/A')}\n\n"
-                    f"<b>Video</b>\n"
-                    f"Codec: {info['video'].get('codec', 'N/A')}\n"
-                    f"Resolution: {info['video'].get('resolution', 'N/A')}\n"
-                    f"FPS: {info['video'].get('fps', 'N/A')}\n"
-                    f"Bitrate: {info['video'].get('bitrate', 'N/A')}\n\n"
-                    f"<b>Size</b>\n"
-                    f"Before: {file_size:.2f} MB\n"
-                    f"After: {os.path.getsize(output_path)/(1024*1024):.2f} MB\n"
-                    f"Saved: {((file_size-os.path.getsize(output_path)/(1024*1024))/file_size)*100:.1f}%"
-                )
+                        try:
+                            output_path = os.path.join(
+                                ENCODES_DIR,
+                                f"{os.path.splitext(os.path.basename(downloaded_file))[0]}_{quality}.mkv"
+                            )
 
-                # Upload with new parameters
-                await Uploader.upload_video(
-                    item.message._client,
-                    item.message.chat.id,
-                    output_path,
-                    caption=caption,
-                    filename=new_name,
-                    telegraph_url=telegraph_url,
-                    progress_callback=progress_tracker.update_progress
-                )
-                
-                encoding_status[quality] = "✅ Done"
-                await status_message.edit_text(
-                    "🎬 Encoding Status:\n" + 
-                    "\n".join(f"{q}: {encoding_status[q]}" for q in Config.QUALITIES)
-                )
+                            # Encode video
+                            await status_message.edit_text(f"🎬 Starting {quality} encode...")
+                            encoded_file, _ = await encoder.encode_video(
+                                downloaded_file, 
+                                output_path,
+                                Config.TARGET_SIZES[quality], 
+                                quality,
+                                progress_callback=progress_tracker.update_progress
+                            )
 
+                            # Verify encoded file
+                            if not os.path.exists(encoded_file):
+                                raise Exception(f"Encoding failed - file not found: {encoded_file}")
+
+                            encoded_size = os.path.getsize(encoded_file)/(1024*1024)
+                            if encoded_size > Config.TARGET_SIZES[quality]:
+                                raise Exception(f"Encoded size {encoded_size:.1f}MB exceeds limit for {quality}")
+
+                            # Upload with retries
+                            await status_message.edit_text(f"📤 Uploading {quality}...")
+                            upload_success = False
+                            
+                            for upload_attempt in range(3):
+                                try:
+                                    caption = (
+                                        f"🎥 {os.path.splitext(os.path.basename(downloaded_file))[0]}\n"
+                                        f"📊 Quality: {quality}\n"
+                                        f"📦 Size: {encoded_size:.1f}MB\n"
+                                        f"🔄 Reduced: {((actual_size-encoded_size)/actual_size)*100:.1f}%"
+                                    )
+
+                                    await Uploader.upload_video(
+                                        item.message._client,
+                                        item.message.chat.id,
+                                        encoded_file,
+                                        caption,
+                                        progress_callback=progress_tracker.update_progress,
+                                        filename=os.path.basename(encoded_file)
+                                    )
+                                    upload_success = True
+                                    await status_message.edit_text(f"✅ {quality} uploaded successfully!")
+                                    break
+
+                                except Exception as e:
+                                    print(f"Upload attempt {upload_attempt + 1} failed: {e}")
+                                    if upload_attempt < 2:
+                                        await status_message.edit_text(
+                                            f"⚠️ Upload failed, retrying {quality} ({upload_attempt + 2}/3)..."
+                                        )
+                                        await asyncio.sleep(5)
+                                        continue
+                                    raise
+
+                            if not upload_success:
+                                raise Exception(f"Failed to upload {quality} after 3 attempts")
+
+                        except Exception as e:
+                            print(f"Error processing {quality}: {e}")
+                            await status_message.edit_text(f"❌ Error with {quality}: {str(e)}")
+                            continue
+                        finally:
+                            # Cleanup encoded file after upload attempt
+                            try:
+                                if os.path.exists(encoded_file):
+                                    os.remove(encoded_file)
+                            except Exception as e:
+                                print(f"Cleanup error: {e}")
+
+                    await status_message.edit_text("✅ All qualities processed!")
+                    return  # Success - exit retry loop
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    raise Exception(f"Processing error: {str(e)}")
+
+            except (ConnectionError, ConnectionResetError) as e:
+                print(f"Connection error (attempt {attempt+1}/{retries}): {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                raise
             except Exception as e:
-                print(f"Error processing {quality}: {e}")
-                encoding_status[quality] = "❌ Failed"
-                await status_message.edit_text(f"Error in {quality}: {str(e)}")
-                continue
-
-        # Cleanup only after all qualities are done
-        cleanup_files = list(encoded_files.values())
-        if downloaded_file:
-            cleanup_files.append(downloaded_file)
-            
-        for file_path in cleanup_files:
-            try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    print(f"Cleaned up: {file_path}")
-            except Exception as e:
-                print(f"Cleanup error: {e}")
-
-        await status_message.edit_text("✅ All processing complete!")
+                print(f"Process error: {e}")
+                if status_message:
+                    await status_message.edit_text(
+                        f"❌ Error in task {item.task_id}: {str(e)}\n"
+                        "Task has been cancelled."
+                    )
+                raise
+            finally:
+                # Cleanup
+                try:
+                    if downloaded_file and os.path.exists(downloaded_file):
+                        os.remove(downloaded_file)
+                    if 'output_path' in locals() and os.path.exists(output_path):
+                        os.remove(output_path)
+                except Exception as e:
+                    print(f"Cleanup error: {e}")
 
     except Exception as e:
         print(f"Process error: {e}")
-        await status_message.edit_text(f"❌ Error: {str(e)}")
+        if status_message:
+            await status_message.edit_text(f"❌ Error: {str(e)}")
+    finally:
+        # Clean up source file
+        try:
+            if downloaded_file and os.path.exists(downloaded_file):
+                os.remove(downloaded_file)
+        except Exception as e:
+            print(f"Source cleanup error: {e}")
 
 async def main():
     try:

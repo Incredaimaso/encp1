@@ -4,16 +4,76 @@ import asyncio
 from typing import Optional, Callable
 from anilist import AniListAPI
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import time
 
 class Uploader:
     # Upload buffer size (2MB)
     BUFFER_SIZE = 2 * 1024 * 1024
 
     @staticmethod
+    async def _retry_upload(func, *args, max_retries=3, **kwargs):
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(5)
+        raise last_error
+
+    @staticmethod
     async def upload_video(client: Client, chat_id: int, 
                           video_path: str, caption: str, 
-                          progress_callback, filename: str = None,
-                          telegraph_url: str = None) -> bool:
+                          progress_callback, filename: str = None) -> bool:
+        if not os.path.exists(video_path):
+            raise Exception("Upload file not found")
+
+        file_size = os.path.getsize(video_path)
+        if file_size == 0:
+            raise Exception("Upload file is empty")
+
+        last_progress_update = time.time()
+        upload_start_time = time.time()
+
+        async def progress(current: int, total: int):
+            nonlocal last_progress_update
+            now = time.time()
+            
+            if now - last_progress_update >= 1:
+                elapsed = now - upload_start_time
+                speed = current / elapsed if elapsed > 0 else 0
+                eta = (total - current) / speed if speed > 0 else 0
+                
+                await progress_callback(current, total,
+                    f"📤 Uploading file...\n"
+                    f"📊 Progress: {(current/total)*100:.1f}%\n"
+                    f"📦 Size: {current/(1024*1024):.1f}MB / {total/(1024*1024):.1f}MB\n"
+                    f"⚡ Speed: {speed/(1024*1024):.2f} MB/s\n"
+                    f"⏱️ ETA: {int(eta/60)}m {int(eta%60)}s"
+                )
+                last_progress_update = now
+
+        try:
+            await client.send_document(
+                chat_id=chat_id,
+                document=video_path,
+                caption=caption,
+                file_name=filename or os.path.basename(video_path),
+                force_document=True,
+                progress=progress,
+                disable_notification=True
+            )
+            return True
+        except Exception as e:
+            print(f"Upload error: {str(e)}")
+            raise Exception(f"Upload failed: {str(e)}")
+
+    @staticmethod
+    async def _upload_single(client: Client, chat_id: int, 
+                          video_path: str, caption: str, 
+                          progress_callback, filename: str = None) -> bool:
         try:
             file_size = os.path.getsize(video_path)
             last_update_time = [0]
@@ -37,51 +97,16 @@ class Uploader:
 
             progress.start_time = asyncio.get_event_loop().time()
 
-            # Create inline keyboard if Telegraph URL exists
-            reply_markup = None
-            if telegraph_url:
-                reply_markup = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "📋 Detailed MediaInfo",
-                        url=telegraph_url
-                    )]
-                ])
-
-            # Get correct name from AniList
-            anilist = AniListAPI()
-            current_title = os.path.splitext(os.path.basename(filename))[0]
-            anime_data = await anilist.search_anime(os.path.basename(video_path))
-            if anime_data:
-                proper_title = anime_data.get('title', {}).get('english') or \
-                             anime_data.get('title', {}).get('romaji')
-                if proper_title:
-                    filename = filename.replace(
-                        current_title,
-                        proper_title.strip()
-                    )
-
-            # Get thumbnail
-            thumb_path = await anilist.get_thumbnail(
-                proper_title or filename,
-                os.path.dirname(video_path)
-            )
-
-            # Upload with all parameters
+            # Upload with basic parameters
             await client.send_document(
                 chat_id=chat_id,
                 document=video_path,
                 caption=caption,
-                thumb=thumb_path,
                 file_name=filename,
                 force_document=True,
-                reply_markup=reply_markup,
                 progress=progress,
                 disable_notification=True
             )
-
-            # Cleanup thumbnail
-            if thumb_path and os.path.exists(thumb_path):
-                os.remove(thumb_path)
 
             return True
             
