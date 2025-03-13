@@ -3,79 +3,125 @@ import subprocess
 import sys
 import os
 import socket
-from config import Config
+import signal
 import psutil
+import resource
+from config import Config
+from typing import Optional
 
-def is_port_in_use(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) == 0
+class ProcessManager:
+    def __init__(self):
+        self.processes = []
+        self.aria2_process = None
+        self.max_memory_percent = 90
+        self.cpu_affinity = list(range(os.cpu_count()))  # Use all cores
+        self.monitor_interval = 60  # Check every minute
 
-def get_aria2c_processes():
-    for proc in psutil.process_iter(['pid', 'name']):
+    async def setup_processes(self):
+        """Initialize all system processes"""
         try:
-            if 'aria2c' in proc.info['name'].lower():
-                return proc
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    return None
-
-async def kill_existing_processes():
-    """Kill any existing aria2c or ffmpeg processes"""
-    try:
-        if sys.platform == 'linux':
-            os.system('pkill -9 aria2c')
-            os.system('pkill -9 ffmpeg')
-            await asyncio.sleep(1)
-        else:
-            subprocess.run('taskkill /F /IM aria2c.exe', shell=True, stderr=subprocess.DEVNULL)
-            subprocess.run('taskkill /F /IM ffmpeg.exe', shell=True, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-async def start_aria2c():
-    try:
-        await kill_existing_processes()
-        downloads_dir = os.path.abspath("downloads")
-        os.makedirs(downloads_dir, exist_ok=True)
-        
-        # Kill existing processes
-        if sys.platform == 'win32':
-            subprocess.run('taskkill /F /IM aria2c.exe', shell=True, stderr=subprocess.DEVNULL)
-            await asyncio.sleep(1)
-        else:
-            subprocess.run('pkill -9 aria2c', shell=True, stderr=subprocess.DEVNULL)
-        
-        # Simplified aria2c command
-        cmd = [
-            'aria2c',
-            '--enable-rpc',
-            f'--rpc-listen-port={Config.ARIA2_PORT}',
-            '--rpc-listen-all=true',
-            '--rpc-allow-origin-all=true',
-            f'--dir={downloads_dir}'  # Keep download directory setting
-        ]
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
-        )
-
-        # Wait for process to start
-        for i in range(5):
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                raise Exception(f"aria2c failed to start: {stderr.decode()}")
+            # Set process limits
+            resource.setrlimit(resource.RLIMIT_NOFILE, (131072, 131072))
             
-            if is_port_in_use(Config.ARIA2_PORT):
-                print(f"Aria2c daemon started successfully in {downloads_dir}")
-                return process
+            # Set CPU affinity
+            if hasattr(os, 'sched_setaffinity'):
+                os.sched_setaffinity(0, self.cpu_affinity)
+            
+            # Start process monitoring
+            asyncio.create_task(self._monitor_resources())
+            
+            return True
+        except Exception as e:
+            print(f"Process setup error: {e}")
+            return False
+
+    async def _monitor_resources(self):
+        """Monitor system resources"""
+        while True:
+            try:
+                # Check memory usage
+                memory_percent = psutil.virtual_memory().percent
+                if memory_percent > self.max_memory_percent:
+                    print(f"⚠️ High memory usage: {memory_percent}%")
                 
-            await asyncio.sleep(1)
+                # Check CPU usage
+                cpu_percent = psutil.cpu_percent(interval=1)
+                if cpu_percent > 90:
+                    print(f"⚠️ High CPU usage: {cpu_percent}%")
+                
+                # Monitor aria2c process
+                if not self._check_aria2c():
+                    print("♻️ Restarting aria2c...")
+                    await self.start_aria2()
+                    
+            except Exception as e:
+                print(f"Monitor error: {e}")
+            
+            await asyncio.sleep(self.monitor_interval)
 
-        raise Exception("Aria2c failed to start after timeout")
+    def _check_aria2c(self) -> bool:
+        """Check if aria2c is running"""
+        for proc in psutil.process_iter(['name']):
+            try:
+                if 'aria2c' in proc.info['name']:
+                    return True
+            except:
+                continue
+        return False
 
-    except Exception as e:
-        print(f"Failed to start aria2c daemon: {e}")
-        sys.exit(1)
+    async def start_aria2(self):
+        """Start aria2c daemon"""
+        try:
+            downloads_dir = os.path.abspath("downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
+            
+            cmd = [
+                'aria2c',
+                '--enable-rpc',
+                f'--rpc-listen-port={Config.ARIA2_PORT}',
+                '--rpc-listen-all=true',
+                '--daemon=false',
+                '--max-connection-per-server=10',
+                '--rpc-max-request-size=1024M',
+                '--seed-time=0.01',
+                '--min-split-size=10M',
+                '--follow-torrent=mem',
+                '--split=10',
+                f'--dir={downloads_dir}'
+            ]
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid if os.name != 'nt' else None
+            )
+            
+            self.processes.append(process)
+            self.aria2_process = process
+            print(f"✅ Aria2c daemon started - PID: {process.pid}")
+            return process
+
+        except Exception as e:
+            print(f"❌ Failed to start aria2c: {e}")
+            return None
+
+    def cleanup(self):
+        """Clean up all managed processes"""
+        print("\n🧹 Cleaning up processes...")
+        for proc in self.processes:
+            try:
+                if proc and proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+            except:
+                try:
+                    proc.kill()
+                except:
+                    pass
+
+# Create global process manager
+process_manager = ProcessManager()
+
+# Make cleanup function available
+cleanup = process_manager.cleanup

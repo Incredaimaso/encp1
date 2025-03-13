@@ -11,3 +11,6 @@ backoff>=2.2.1
 psutil>=5.8.0  # For CPU monitoring
 pytz>=2023.3  # For timezone handling
 websockets
+loop>=0.17.0; platform_system != "Windows"  # Fast event loop for Linux
+psutil>=5.8.0
+setproctitle>=1.2.2uv
