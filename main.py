@@ -1,6 +1,6 @@
 from startup import start_aria2c
 from bot_manager import BotManager
-from queue_manager import QueueItem  # Fix the import
+from queue_manager import QueueItem
 import asyncio
 import atexit
 import signal
@@ -15,6 +15,7 @@ from pathlib import Path
 from renamer import VideoRenamer
 import sys
 import psutil
+from logger import BotLogger  # Add logger import
 
 DOWNLOADS_DIR = "downloads"
 ENCODES_DIR = "encodes"
@@ -46,9 +47,19 @@ def cleanup_directories():
 async def process_queue_item(item: QueueItem):
     retries = 3
     status_message = None
+    log_message = None
     encoder = None
     
     try:
+        logger = BotLogger(item.message._client)
+        
+        # Initial log
+        log_message = await logger.log_message(
+            f"⚡ New task started\n"
+            f"👤 User: {item.message.from_user.mention}\n"
+            f"🆔 Task: {item.task_id}"
+        )
+
         for attempt in range(retries):
             try:
                 if not status_message:
@@ -86,6 +97,14 @@ async def process_queue_item(item: QueueItem):
                             
                             if actual_size > 1900:
                                 raise Exception("File too large (max: 1.9GB)")
+
+                            # Log download completion
+                            await logger.log_status(
+                                f"✅ Download complete\n"
+                                f"📁 File: {os.path.basename(downloaded_file)}\n"
+                                f"📦 Size: {actual_size:.1f}MB",
+                                log_message.id if log_message else None
+                            )
 
                         except Exception as e:
                             if downloaded_file and os.path.exists(downloaded_file):

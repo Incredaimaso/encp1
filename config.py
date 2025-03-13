@@ -53,3 +53,8 @@ class Config:
         ),
         'error': "❌ Error: {}"
     }
+    
+    # Log channel settings
+    LOG_CHANNEL = int(os.getenv('LOG_CHANNEL', 0))  # Channel/Group ID for logs
+    ENABLE_LOGS = bool(os.getenv('ENABLE_LOGS', 'True'))  # Enable/disable logging
+    FORWARD_ENCODED = bool(os.getenv('FORWARD_ENCODED', 'True'))  # Forward encoded files
