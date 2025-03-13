@@ -19,8 +19,22 @@ def get_aria2c_processes():
             pass
     return None
 
+async def kill_existing_processes():
+    """Kill any existing aria2c or ffmpeg processes"""
+    try:
+        if sys.platform == 'linux':
+            os.system('pkill -9 aria2c')
+            os.system('pkill -9 ffmpeg')
+            await asyncio.sleep(1)
+        else:
+            subprocess.run('taskkill /F /IM aria2c.exe', shell=True, stderr=subprocess.DEVNULL)
+            subprocess.run('taskkill /F /IM ffmpeg.exe', shell=True, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
 async def start_aria2c():
     try:
+        await kill_existing_processes()
         downloads_dir = os.path.abspath("downloads")
         os.makedirs(downloads_dir, exist_ok=True)
         

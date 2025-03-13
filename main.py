@@ -13,6 +13,8 @@ from display import ProgressTracker
 from config import Config
 from pathlib import Path
 from renamer import VideoRenamer
+import sys
+import psutil
 
 DOWNLOADS_DIR = "downloads"
 ENCODES_DIR = "encodes"
@@ -219,18 +221,62 @@ async def process_queue_item(item: QueueItem):
         except Exception as e:
             print(f"Source cleanup error: {e}")
 
+def handle_sigterm(signum, frame):
+    print("\n🛑 Received shutdown signal, cleaning up...")
+    cleanup_directories()
+    # Force kill any running ffmpeg processes
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            if 'ffmpeg' in proc.name().lower():
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    sys.exit(0)
+
 async def main():
     try:
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, handle_sigterm)
+        signal.signal(signal.SIGINT, handle_sigterm)
+        
+        # Make signals work in asyncio
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))
+
         await start_aria2c()
         setup_directories()
         
-        atexit.register(cleanup_directories)
-        signal.signal(signal.SIGINT, lambda sig, frame: cleanup_directories())
-        
         bot = BotManager(process_queue_item)
         await bot.start()
+    except Exception as e:
+        print(f"Main error: {e}")
     finally:
-        cleanup_directories()
+        await cleanup()
+
+async def shutdown(sig):
+    print(f"\n🛑 Received signal {sig.name}, shutting down gracefully...")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    cleanup_directories()
+    sys.exit(0)
+
+async def cleanup():
+    print("🧹 Cleaning up resources...")
+    cleanup_directories()
+    # Kill any remaining ffmpeg processes
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            if 'ffmpeg' in proc.name().lower():
+                proc.kill()
+        except:
+            pass
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Received Ctrl+C")
+    finally:
+        asyncio.run(cleanup())
