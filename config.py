@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+import psutil
 
 load_dotenv()
 
@@ -15,11 +16,22 @@ class Config:
     SUPPORTED_FORMATS = ['.mkv', '.mp4', '.avi', '.webm']
     QUALITIES = ['480p', '720p', '1080p']
     
-    # Performance settings
-    MAX_CONCURRENT_ENCODES = 2  # Number of simultaneous encodes
-    RAM_USAGE_LIMIT = 14 * 1024  # 14GB in MB
-    CPU_USAGE_LIMIT = 90  # Max CPU usage percentage
-    TEMP_BUFFER_SIZE = 64 * 1024  # 64MB buffer for I/O
+    # Enhanced performance settings
+    MAX_CONCURRENT_ENCODES = max(1, os.cpu_count() // 2)  # Half of CPU cores
+    RAM_USAGE_LIMIT = int(psutil.virtual_memory().total * 0.9 / (1024 * 1024))  # 90% of total RAM
+    CPU_USAGE_LIMIT = 100  # Use all available CPU
+    IO_NICE = -10  # Higher I/O priority (Linux only)
+    PROCESS_NICE = -10  # Higher process priority (Linux only)
+    TEMP_BUFFER_SIZE = 256 * 1024  # 256MB buffer for I/O
+
+    # FFmpeg specific settings
+    FFMPEG_THREAD_QUEUE_SIZE = 1024  # Larger thread queue
+    FFMPEG_HWACCEL = 'auto'  # Auto hardware acceleration
+    FFMPEG_CUSTOM_OPTS = {
+        'thread_queue_size': '1024',
+        'probesize': '100M',
+        'analyzeduration': '100M'
+    }
     
     TARGET_SIZES = {
         '480p': 90,   # Slightly reduced targets for CPU

@@ -104,14 +104,18 @@ async def process_queue_item(item: QueueItem):
                             break
 
                         try:
+                            # Clear previous encoded file if exists
+                            if 'encoded_file' in locals() and os.path.exists(encoded_file):
+                                os.remove(encoded_file)
+
                             output_path = os.path.join(
                                 ENCODES_DIR,
                                 f"{os.path.splitext(os.path.basename(downloaded_file))[0]}_{quality}.mkv"
                             )
 
-                            # Encode video
+                            # Encode single quality
                             await status_message.edit_text(f"🎬 Starting {quality} encode...")
-                            encoded_file, _ = await encoder.encode_video(
+                            encoded_file, encode_info = await encoder.encode_video(
                                 downloaded_file, 
                                 output_path,
                                 Config.TARGET_SIZES[quality], 
@@ -120,25 +124,30 @@ async def process_queue_item(item: QueueItem):
                             )
 
                             # Verify encoded file
-                            if not os.path.exists(encoded_file):
-                                raise Exception(f"Encoding failed - file not found: {encoded_file}")
+                            if not encoded_file or not os.path.exists(encoded_file):
+                                raise Exception(f"Encoding failed for {quality} - file not found")
 
                             encoded_size = os.path.getsize(encoded_file)/(1024*1024)
-                            if encoded_size > Config.TARGET_SIZES[quality]:
-                                raise Exception(f"Encoded size {encoded_size:.1f}MB exceeds limit for {quality}")
 
                             # Upload with retries
-                            await status_message.edit_text(f"📤 Uploading {quality}...")
                             upload_success = False
-                            
                             for upload_attempt in range(3):
                                 try:
+                                    await status_message.edit_text(
+                                        f"📤 Uploading {quality} "
+                                        f"({upload_attempt + 1}/3)..."
+                                    )
+
+                                    reduction = ((actual_size-encoded_size)/actual_size)*100
                                     caption = (
                                         f"🎥 {os.path.splitext(os.path.basename(downloaded_file))[0]}\n"
                                         f"📊 Quality: {quality}\n"
                                         f"📦 Size: {encoded_size:.1f}MB\n"
-                                        f"🔄 Reduced: {((actual_size-encoded_size)/actual_size)*100:.1f}%"
+                                        f"🔄 Reduced: {reduction:.1f}%"
                                     )
+
+                                    if encode_info and encode_info.get('target_exceeded'):
+                                        caption += f"\n⚠️ Note: Size exceeded target by {encode_info['size_excess']:.1f}%"
 
                                     await Uploader.upload_video(
                                         item.message._client,
@@ -148,16 +157,16 @@ async def process_queue_item(item: QueueItem):
                                         progress_callback=progress_tracker.update_progress,
                                         filename=os.path.basename(encoded_file)
                                     )
+
                                     upload_success = True
-                                    await status_message.edit_text(f"✅ {quality} uploaded successfully!")
+                                    await status_message.edit_text(
+                                        f"✅ {quality} completed and uploaded!"
+                                    )
                                     break
 
                                 except Exception as e:
                                     print(f"Upload attempt {upload_attempt + 1} failed: {e}")
                                     if upload_attempt < 2:
-                                        await status_message.edit_text(
-                                            f"⚠️ Upload failed, retrying {quality} ({upload_attempt + 2}/3)..."
-                                        )
                                         await asyncio.sleep(5)
                                         continue
                                     raise
@@ -165,17 +174,17 @@ async def process_queue_item(item: QueueItem):
                             if not upload_success:
                                 raise Exception(f"Failed to upload {quality} after 3 attempts")
 
-                        except Exception as e:
-                            print(f"Error processing {quality}: {e}")
-                            await status_message.edit_text(f"❌ Error with {quality}: {str(e)}")
-                            continue
-                        finally:
-                            # Cleanup encoded file after upload attempt
+                            # Clean up this quality's encoded file before moving to next
                             try:
                                 if os.path.exists(encoded_file):
                                     os.remove(encoded_file)
                             except Exception as e:
-                                print(f"Cleanup error: {e}")
+                                print(f"Cleanup error for {quality}: {e}")
+
+                        except Exception as e:
+                            print(f"Error processing {quality}: {e}")
+                            await status_message.edit_text(f"❌ Error with {quality}: {str(e)}")
+                            continue
 
                     await status_message.edit_text("✅ All qualities processed!")
                     return  # Success - exit retry loop

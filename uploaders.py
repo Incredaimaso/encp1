@@ -24,6 +24,18 @@ class Uploader:
         raise last_error
 
     @staticmethod
+    async def verify_upload(client: Client, chat_id: int, 
+                          message_id: int, file_size: int) -> bool:
+        """Verify uploaded file size matches source"""
+        try:
+            message = await client.get_messages(chat_id, message_id)
+            if not message or not message.document:
+                return False
+            return message.document.file_size == file_size
+        except Exception:
+            return False
+
+    @staticmethod
     async def upload_video(client: Client, chat_id: int, 
                           video_path: str, caption: str, 
                           progress_callback, filename: str = None) -> bool:
@@ -56,7 +68,7 @@ class Uploader:
                 last_progress_update = now
 
         try:
-            await client.send_document(
+            message = await client.send_document(
                 chat_id=chat_id,
                 document=video_path,
                 caption=caption,
@@ -65,7 +77,13 @@ class Uploader:
                 progress=progress,
                 disable_notification=True
             )
+
+            # Verify upload
+            if not await Uploader.verify_upload(client, chat_id, message.id, file_size):
+                raise Exception("Upload verification failed")
+
             return True
+
         except Exception as e:
             print(f"Upload error: {str(e)}")
             raise Exception(f"Upload failed: {str(e)}")
