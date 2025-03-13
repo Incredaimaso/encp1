@@ -13,14 +13,14 @@ class Handlers:
 
     async def start_handler(self, client, message):
         await message.reply_text(
-            "👋 *Welcome to Video Encoder Bot!*\n"
-            "Send me a video or use /l to download and encode.\n"
-            "Use /help for more information."
+            "*Welcome to Video Encoder Bot!*\n"
+            "Send me a video or use `/l` to download and encode.\n"
+            "Use `/help` for more information."
         )
 
     async def help_handler(self, client, message):
         await message.reply_text(
-            "📖 *Available Commands:*\n"
+            "*Available Commands:*\n"
             "`/l <url>` - Download and encode video\n"
             "`/add <user_id>` - Add approved user (owner only)\n"
             "Send video file to encode directly"
@@ -34,7 +34,7 @@ class Handlers:
         try:
             user_id = int(message.text.split()[1])
             if self.user_manager.add_user(user_id):
-                await message.reply_text(f"✅ User {user_id} added successfully!")
+                await message.reply_text(f"✅ User `{user_id}` added successfully!")
             else:
                 await message.reply_text("⚠️ User already approved!")
         except:

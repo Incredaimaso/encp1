@@ -1,5 +1,5 @@
 try:
-    from pyrogram import Client, filters
+    from pyrogram import Client, filters, enums  # Add enums import
 except ImportError:
     # Alternative import path
     from pyrogram.client import Client
@@ -37,6 +37,7 @@ class BotManager:
         self.session_lock = asyncio.Lock()
         self.db_timeout = 30  # Database timeout in seconds
         self.session_file = "video_encoder_bot.session"
+        self.parse_mode = "markdown"  # Default parse mode for messages
     
     def setup_handlers(self):
         # Command handlers
@@ -52,7 +53,8 @@ class BotManager:
                 "video_encoder_bot",
                 api_id=Config.API_ID,
                 api_hash=Config.API_HASH,
-                bot_token=Config.BOT_TOKEN
+                bot_token=Config.BOT_TOKEN,
+                parse_mode=self.parse_mode  # Set parse mode during initialization
             )
             self.setup_handlers()
 
@@ -72,7 +74,7 @@ class BotManager:
         backoff.expo,
         (ConnectionError, ConnectionResetError),
         max_tries=3,
-        jitter=None
+        jitter=None,
     )
     async def _maintain_connection(self):
         try:
@@ -105,7 +107,6 @@ class BotManager:
                     await asyncio.sleep(2)
                 
                 self.setup_app()
-                self.app.set_parse_mode("html")
                 await self.app.start()
                 self.session_active = True
                 print("📡 Bot session initialized")

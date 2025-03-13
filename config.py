@@ -38,3 +38,14 @@ class Config:
         '720p': 185,  
         '1080p': 280  
     }
+    
+    # Bot settings
+    DEFAULT_PARSE_MODE = "markdown"
+    MESSAGE_TEMPLATES = {
+        'welcome': "*Welcome to Video Encoder Bot!*\n"
+                  "Send me a video or use `/l` to download and encode.",
+        'help': "*Available Commands:*\n"
+               "`/l <url>` - Download and encode video\n"
+               "`/add <user_id>` - Add approved user (owner only)",
+        'error': "❌ *Error:* `{}`"
+    }
