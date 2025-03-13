@@ -30,13 +30,19 @@ class CPUEncoder:
                 'preset': 'medium'
             }
         }
+        self.ram_mb = (psutil.virtual_memory().total / (1024 * 1024)) * 0.6  # Use 60% of total RAM
         self.x264_params = {
             'preset': 'medium',
             'tune': 'film',
             'movflags': '+faststart',
-            'threads': os.cpu_count()
+            'threads': max(1, os.cpu_count() - 1),  # Leave one core free
+            'thread-input': '1',  # Enable threaded input
+            'thread-output': '1',  # Enable threaded output
+            'asm': 'auto',  # Enable all CPU optimizations
+            'prefetch-factor': '2',  # Increase prefetch for better RAM usage
+            'cache-size': f'{int(self.ram_mb/2)}M',  # Use half of allocated RAM for cache
         }
-        self.process_priority = psutil.HIGH_PRIORITY_CLASS if os.name == 'nt' else 19
+        self.process_priority = 10  # Nice value for Linux (lower means higher priority)
 
     async def encode_video(self, input_file: str, output_file: str, 
                           target_size: int, resolution: str,
@@ -62,8 +68,13 @@ class CPUEncoder:
                     'preset': self.x264_params['preset'],
                     'tune': self.x264_params['tune'],
                     'threads': self.x264_params['threads'],
+                    'thread-input': self.x264_params['thread-input'],
+                    'thread-output': self.x264_params['thread-output'],
+                    'asm': self.x264_params['asm'],
+                    'prefetch-factor': self.x264_params['prefetch-factor'],
+                    'cache-size': self.x264_params['cache-size'],
                     'crf': params['crf'],
-                    'vf': f'scale=-2:{params["height"]}',
+                    'vf': f'scale=-2:{params["height"]}:flags=lanczos',  # Better scaling
                     'c:a': 'aac',
                     'b:a': params['audio_bitrate'],
                     'movflags': self.x264_params['movflags'],

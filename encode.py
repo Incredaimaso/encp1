@@ -46,6 +46,14 @@ class VideoEncoder:
             '1080p': 285 # ~300MB limit
         }
         self.last_line_length = 0  # For single-line updates
+
+        # Use CPU encoding parameters
+        self.x264_params = {
+            'preset': 'medium',  # Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+            'profile': 'high',
+            'level': '4.1',
+            'threads': os.cpu_count()
+        }
     
     def _check_gpu(self) -> bool:
         if self._gpu_check_done:
@@ -142,39 +150,29 @@ class VideoEncoder:
                           progress_callback=None) -> Tuple[str, Dict]:
         process = None
         try:    
-            # Single log message for encode start
             print(f"\n🎬 Starting {resolution} encode...")
             
-            # Create logger instance for this encode only
-            encode_logger = logging.getLogger(f'encoder_{resolution}')
-            if not encode_logger.handlers:
-                handler = logging.StreamHandler()
-                handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-                encode_logger.addHandler(handler)
-            
-            # Verify size limit before starting
-            if target_size > self.MAX_SIZES[resolution]:
-                raise Exception(f"Target size {target_size}MB exceeds {resolution} limit of {self.MAX_SIZES[resolution]}MB")
-
             # Calculate guaranteed safe bitrate
             probe = ffmpeg.probe(input_file)
             duration = float(probe['format']['duration'])
             safe_bitrate = int((((self.MAX_SIZES[resolution] * 0.95) * 8 * 1024 * 1024) / duration))
 
-            # Command with strict bitrate control
+            # Command with CPU encoding
             cmd = [
                 'ffmpeg', '-y',
                 '-i', input_file,
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p7',
-                '-rc', 'vbr',
+                '-c:v', 'libx264',  # CPU encoder
+                '-preset', self.x264_params['preset'],
+                '-profile:v', self.x264_params['profile'],
+                '-level', self.x264_params['level'],
                 '-b:v', f'{safe_bitrate}',
-                '-maxrate', f'{safe_bitrate}',
-                '-bufsize', f'{safe_bitrate*2}',
+                '-maxrate', f'{int(safe_bitrate * 1.2)}',
+                '-bufsize', f'{int(safe_bitrate * 2)}',
                 '-vf', f'scale=-2:{self.quality_params[resolution]["height"]}',
                 '-c:a', 'aac',
                 '-b:a', self.quality_params[resolution]['audio_bitrate'],
                 '-movflags', '+faststart',
+                '-threads', str(self.x264_params['threads']),
                 output_file
             ]
 
@@ -268,7 +266,7 @@ class VideoEncoder:
             return output_file, None
 
         except Exception as e:
-            encode_logger.error(f"Encoding error: {str(e)}")
+            self.logger.error(f"Encoding error: {str(e)}")
             if process:
                 process.terminate()
             if os.path.exists(output_file):
