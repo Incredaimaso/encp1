@@ -13,16 +13,16 @@ class Handlers:
 
     async def start_handler(self, client, message):
         await message.reply_text(
-            "👋 Welcome to Video Encoder Bot!\n"
+            "👋 *Welcome to Video Encoder Bot!*\n"
             "Send me a video or use /l to download and encode.\n"
             "Use /help for more information."
         )
 
     async def help_handler(self, client, message):
         await message.reply_text(
-            "📖 Available Commands:\n"
-            "/l <url> - Download and encode video\n"
-            "/add <user_id> - Add approved user (owner only)\n"
+            "📖 *Available Commands:*\n"
+            "`/l <url>` - Download and encode video\n"
+            "`/add <user_id>` - Add approved user (owner only)\n"
             "Send video file to encode directly"
         )
 
