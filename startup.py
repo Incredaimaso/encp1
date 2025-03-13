@@ -123,5 +123,14 @@ class ProcessManager:
 # Create global process manager
 process_manager = ProcessManager()
 
-# Make cleanup function available
+async def start_aria2c():
+    """Start aria2c daemon and return when ready"""
+    try:
+        return await process_manager.start_aria2()
+    except Exception as e:
+        print(f"Failed to start aria2c: {e}")
+        return None
+
+# Export the required functions
+__all__ = ['start_aria2c', 'process_manager', 'cleanup']
 cleanup = process_manager.cleanup

@@ -1,8 +1,8 @@
-from startup import start_aria2c
+from startup import start_aria2c, process_manager
 from bot_manager import BotManager
 from queue_manager import QueueItem
+from logger import BotLogger
 import asyncio
-import atexit
 import signal
 import os
 import shutil
@@ -11,12 +11,10 @@ from downloaders import Downloader
 from uploaders import Uploader
 from display import ProgressTracker
 from config import Config
-from pathlib import Path
-from renamer import VideoRenamer
 import sys
 import psutil
-from logger import BotLogger  # Add logger import
 
+# Constants
 DOWNLOADS_DIR = "downloads"
 ENCODES_DIR = "encodes"
 
