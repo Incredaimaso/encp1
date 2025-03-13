@@ -66,3 +66,27 @@ class Handlers:
             await self.queue_manager.process_queue(self.process_func)
         except Exception as e:
             await message.reply_text(f"❌ Error: {str(e)}")
+
+    async def cancel_handler(self, client, message):
+        if not self.user_manager.is_approved(message.from_user.id, Config.OWNER_ID):
+            await message.reply_text("⚠️ You are not approved to use this bot!")
+            return
+
+        try:
+            task_id = message.text.split(None, 1)[1].strip()
+            if await self.queue_manager.cancel_task(task_id):
+                await message.reply_text(
+                    f"✅ Task `{task_id}` cancellation initiated\n"
+                    "Please wait for current operation to complete..."
+                )
+            else:
+                await message.reply_text(
+                    f"❌ Task `{task_id}` not found or already completed!"
+                )
+        except IndexError:
+            await message.reply_text(
+                "❌ Please provide a task ID!\n"
+                "Usage: `/cancel task_id`"
+            )
+        except Exception as e:
+            await message.reply_text(f"❌ Error: {str(e)}")
