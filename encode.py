@@ -48,14 +48,28 @@ class VideoEncoder:
         self.SIZE_TOLERANCE = 1.1  # Allow 10% over target
         self.last_line_length = 0  # For single-line updates
 
-        # Adjusted encoding parameters for stability
+        # Optimized encoding parameters for better speed
         self.x264_params = {
-            'preset': 'veryfast',  # Use faster preset to prevent stalling
-            'tune': 'film',
+            'preset': 'ultrafast',     # Fastest encoding preset
+            'tune': 'fastdecode',      # Optimize for decoding speed
             'profile': 'high',
             'level': '4.1',
-            'threads': 0,  # Let ffmpeg handle thread allocation
-            'stats': '1',  # Enable encoding stats
+            'threads': 0,              # Auto thread detection
+            'thread-type': 3,          # Frame + Slice threading
+            'thread-input': 1,         # Enable threaded input
+            'thread-output': 1,        # Enable threaded output
+            'asm': 'auto',            # Enable all SIMD optimizations
+            'stats': 1,               # Enable encoding stats
+            'fast-pskip': 1,          # Enable fast pskip
+            'rc-lookahead': 20,       # Reduce lookahead for speed
+            'direct-pred': 1,         # Fast direct prediction
+            'weightb': 0,             # Disable weighted prediction
+            'mixed-refs': 0,          # Disable mixed references
+            'me_method': 'dia',       # Fast motion estimation
+            'subq': 1,                # Fast subpixel refinement
+            'trellis': 0,             # Disable trellis optimization
+            'no-mbtree': None,        # Disable macroblock tree
+            'sync-lookahead': 0       # Disable lookahead sync
         }
         
         # Process monitoring settings
@@ -181,9 +195,10 @@ class VideoEncoder:
             audio_bitrate = int(self.quality_params[resolution]['audio_bitrate'].replace('k', '000'))
             video_bitrate = total_bitrate - audio_bitrate
 
-            # Enhanced FFmpeg command
+            # Enhanced FFmpeg command with optimized parameters
             cmd = [
                 'ffmpeg', '-y',
+                '-hwaccel', 'auto',    # Enable hardware acceleration if available
                 '-i', input_file,
                 '-c:v', 'libx264',
                 '-preset', self.x264_params['preset'],
@@ -191,15 +206,18 @@ class VideoEncoder:
                 '-profile:v', self.x264_params['profile'],
                 '-level', self.x264_params['level'],
                 '-b:v', f'{video_bitrate}',
-                '-maxrate', f'{int(video_bitrate * 1.5)}',
-                '-bufsize', f'{int(video_bitrate * 2)}',
+                '-maxrate', f'{int(video_bitrate * 2)}',
+                '-bufsize', f'{int(video_bitrate * 4)}',
+                '-refs', '2',          # Reduce reference frames
+                '-bf', '3',           # Maximum B-frames
+                '-flags', '+cgop',     # Closed GOP
                 '-vf', f'scale=-2:{self.quality_params[resolution]["height"]}:flags=fast_bilinear',
                 '-c:a', 'aac',
                 '-b:a', self.quality_params[resolution]['audio_bitrate'],
                 '-ac', '2',
                 '-ar', '48000',
-                '-max_muxing_queue_size', '1024',
-                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '4096',
+                '-movflags', '+faststart+frag_keyframe+empty_moov',
                 '-y',
                 output_file
             ]
