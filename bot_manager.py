@@ -15,6 +15,7 @@ from downloaders import Downloader
 from encode import VideoEncoder
 import time
 from pyrogram.errors import FloodWait
+import os
 
 class BotManager:
     def __init__(self, process_func):
@@ -33,6 +34,9 @@ class BotManager:
         self.session_timeout = 60 * 15  # 15 minutes
         self.max_session_retries = 5
         self.session_count = 0
+        self.session_lock = asyncio.Lock()
+        self.db_timeout = 30  # Database timeout in seconds
+        self.session_file = "video_encoder_bot.session"
     
     def setup_handlers(self):
         # Command handlers
@@ -91,20 +95,28 @@ class BotManager:
 
     async def _init_session(self):
         try:
-            if self.session_active:
-                await self.app.stop()
-                self.session_active = False
-                await asyncio.sleep(2)
-            
-            self.setup_app()
-            await self.app.start()
-            self.session_active = True
-            print("📡 Bot session initialized")
-            return True
+            async with self.session_lock:
+                if self.session_active:
+                    await self.app.stop()
+                    self.session_active = False
+                    # Clear session file
+                    if os.path.exists(self.session_file):
+                        os.remove(self.session_file)
+                    await asyncio.sleep(2)
+                
+                self.setup_app()
+                self.app.set_parse_mode("html")
+                await self.app.start()
+                self.session_active = True
+                print("📡 Bot session initialized")
+                return True
         except Exception as e:
             print(f"❌ Session init error: {e}")
             self.session_active = False
             self.app = None
+            # Cleanup session on error
+            if os.path.exists(self.session_file):
+                os.remove(self.session_file)
             return False
 
     async def start(self):
@@ -116,11 +128,11 @@ class BotManager:
 
                 while self.session_active:
                     try:
-                        # Periodic health check
                         await asyncio.sleep(self.check_interval)
-                        me = await self.app.get_me()
-                        if not me:
-                            raise ConnectionError("Bot session invalid")
+                        async with self.session_lock:
+                            me = await self.app.get_me()
+                            if not me:
+                                raise ConnectionError("Bot session invalid")
                     except FloodWait as e:
                         print(f"⚠️ Rate limit, waiting {e.value} seconds")
                         await asyncio.sleep(e.value)
@@ -131,11 +143,15 @@ class BotManager:
 
             except Exception as e:
                 print(f"❌ Bot error: {str(e)}")
+                # Cleanup session file on error
+                if os.path.exists(self.session_file):
+                    os.remove(self.session_file)
                 await asyncio.sleep(5)
 
             finally:
                 if self.app and self.session_active:
-                    await self.app.stop()
-                    self.session_active = False
+                    async with self.session_lock:
+                        await self.app.stop()
+                        self.session_active = False
                 print("🔄 Restarting bot connection...")
                 await asyncio.sleep(5)
