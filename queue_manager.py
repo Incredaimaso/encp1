@@ -7,6 +7,7 @@ import backoff
 from time import sleep
 import uuid
 import time
+from logger import BotLogger
 
 @dataclass
 class QueueItem:
@@ -36,6 +37,66 @@ class QueueManager:
         self.max_item_retries = 3
         self.active_tasks = {}  # task_id -> QueueItem
         self.progress_check_interval = 30  # Check progress every 30 seconds
+
+    async def process_queue(self, process_func):
+        if self.processing:
+            return
+
+        self.processing = True
+        while not self.is_empty:
+            item = self.get_next()
+            if not item:
+                continue
+
+            try:
+                logger = BotLogger(item.message._client)
+            
+                # Log initial queue status
+                log_msg = await logger.log_task_start(
+                    item.task_id,
+                    {
+                        'mention': item.message.from_user.mention,
+                        'chat_title': getattr(item.message.chat, 'title', None),
+                        'filename': os.path.basename(item.file_path)
+                    }
+                )
+
+                # Process with enhanced progress tracking
+                async def progress_wrapper(current, total, status_text):
+                    progress = {
+                        'current': current,
+                        'total': total,
+                        'percent': (current/total)*100,
+                        'speed': self._calculate_speed(current, item.task_id),
+                        'eta': self._estimate_eta(current, total, item.task_id)
+                    }
+                    
+                    await logger.update_task_progress(
+                        item.task_id,
+                        status_text,
+                        progress
+                    )
+            except Exception as e:
+                print(f"Error initializing logger: {e}")
+                raise
+    
+                    # Process with logging
+                try:
+                    result = await process_func(item, progress_callback=progress_wrapper)
+                    
+                    # Forward encoded file to logs if enabled
+                    if Config.FORWARD_ENCODED and hasattr(result, 'message_id'):
+                        await logger.forward_message(result)
+                        
+                    await logger.update_task_progress(item.task_id, "✅ Completed")
+                    
+                except Exception as e:
+                    await logger.update_task_progress(
+                        item.task_id,
+                        f"❌ Failed: {str(e)}"
+                    )
+                    raise
+
 
     def add_item(self, item: QueueItem):
         self.queue.append(item)
