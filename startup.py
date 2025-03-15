@@ -9,7 +9,8 @@ import resource
 import logging
 import time
 import traceback
-from typing import Optional, List, Dict, Any
+import json
+from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from contextlib import suppress
 from functools import wraps
@@ -273,6 +274,15 @@ class ProcessManager:
             # Clean up temporary files
             await self._cleanup_aria2_temp_files()
             
+            # Check if port is available
+            if not await self._check_port_available(self.aria2_port):
+                new_port = await self._find_available_port(self.aria2_port + 1, 7000)
+                if new_port:
+                    logger.warning(f"Port {self.aria2_port} is busy, using port {new_port} instead")
+                    self.aria2_port = new_port
+                else:
+                    raise Aria2Error(f"Port {self.aria2_port} is busy and no alternative ports are available")
+            
             # Build aria2c command
             cmd = self._build_aria2_command()
             
@@ -289,17 +299,21 @@ class ProcessManager:
             
             # Verify process started successfully
             if process.poll() is not None:
-                stderr = process.stderr.read()
+                stderr = process.stderr.read() if process.stderr else "No error output available"
                 raise Aria2Error(f"aria2c failed to start: {stderr}")
                 
+            # Give process some time to initialize before checking
+            await asyncio.sleep(2)
+            
             # Wait for RPC to become available
-            if not await self._wait_for_aria2_rpc():
+            rpc_available, error_message = await self._wait_for_aria2_rpc()
+            if not rpc_available:
                 if process.poll() is not None:
-                    stderr = process.stderr.read()
+                    stderr = process.stderr.read() if process.stderr else "No error output available"
                     raise Aria2Error(f"aria2c process died: {stderr}")
                 else:
                     process.terminate()
-                    raise Aria2Error("aria2c RPC failed to respond")
+                    raise Aria2Error(f"aria2c RPC failed to respond: {error_message}")
             
             logger.info(f"✅ Aria2c started successfully (PID: {process.pid})")
             self.processes.append(process)
@@ -322,6 +336,25 @@ class ProcessManager:
             if process and process.poll() is None:
                 process.terminate()
             raise Aria2Error(f"Unexpected error starting aria2c: {e}") from e
+
+    async def _check_port_available(self, port: int) -> bool:
+        """Check if a port is available for use."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('127.0.0.1', port))
+            sock.close()
+            return result != 0  # If result is 0, connection succeeded, so port is in use
+        except Exception as e:
+            logger.warning(f"Port check error: {e}")
+            return False  # Assume port is not available on error
+
+    async def _find_available_port(self, start_port: int, end_port: int) -> Optional[int]:
+        """Find an available port in the specified range."""
+        for port in range(start_port, end_port + 1):
+            if await self._check_port_available(port):
+                return port
+        return None
 
     async def _terminate_existing_aria2c(self) -> None:
         """Safely terminate any existing aria2c processes."""
@@ -386,29 +419,74 @@ class ProcessManager:
             '--timeout=10'
         ]
 
-    async def _wait_for_aria2_rpc(self) -> bool:
-        """Wait for aria2c RPC to become available."""
+    async def _wait_for_aria2_rpc(self) -> Tuple[bool, str]:
+        """Wait for aria2c RPC to become available. Returns (success, error_message)."""
         import urllib.request
         import urllib.error
         
         max_attempts = 10
+        last_error = ""
+        
         for attempt in range(max_attempts):
             try:
-                urllib.request.urlopen(
-                    f"http://localhost:{self.aria2_port}/jsonrpc",
-                    timeout=2
-                )
-                logger.info(f"Aria2c RPC responding on port {self.aria2_port} (attempt {attempt + 1})")
-                return True
-            except Exception as e:
-                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {e}")
-                await asyncio.sleep(1)
+                # Try a simple connection first to check if the port is accessible
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1)
+                result = s.connect_ex(('localhost', self.aria2_port))
+                s.close()
                 
-        logger.error(f"Aria2c RPC failed to respond after {max_attempts} attempts")
-        return False
+                if result != 0:
+                    last_error = f"Port {self.aria2_port} is not open yet"
+                    logger.debug(f"Waiting for port to open ({attempt + 1}/{max_attempts}): {last_error}")
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Now try an actual RPC call
+                data = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": "healthcheck",
+                    "method": "aria2.getVersion",
+                    "params": []
+                }).encode('utf-8')
+                
+                req = urllib.request.Request(
+                    f"http://localhost:{self.aria2_port}/jsonrpc",
+                    data=data,
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    if response.getcode() == 200:
+                        result = json.loads(response.read().decode('utf-8'))
+                        logger.info(f"Aria2c RPC responding on port {self.aria2_port} (attempt {attempt + 1})")
+                        logger.info(f"Aria2c version: {result.get('result', {}).get('version', 'unknown')}")
+                        return True, ""
+            except json.JSONDecodeError as e:
+                last_error = f"Invalid JSON response: {e}"
+                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {last_error}")
+            except urllib.error.URLError as e:
+                last_error = f"URL error: {e}"
+                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {last_error}")
+            except ConnectionRefusedError as e:
+                last_error = f"Connection refused: {e}"
+                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {last_error}")
+            except socket.timeout as e:
+                last_error = f"Socket timeout: {e}"
+                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {last_error}")
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.debug(f"Waiting for RPC ({attempt + 1}/{max_attempts}): {last_error}")
+                
+            await asyncio.sleep(1)
+                
+        logger.error(f"Aria2c RPC failed to respond after {max_attempts} attempts. Last error: {last_error}")
+        return False, last_error
 
     async def _read_process_output(self, pipe, log_level):
         """Read and log process output."""
+        if pipe is None:
+            return
+            
         while True:
             line = pipe.readline()
             if not line:
