@@ -7,33 +7,8 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import time
 
 class Uploader:
-    # Upload buffer size (2MB)
-    BUFFER_SIZE = 2 * 1024 * 1024
-
-    @staticmethod
-    async def _retry_upload(func, *args, max_retries=3, **kwargs):
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                last_error = e
-                if attempt == max_retries - 1:
-                    raise
-                await asyncio.sleep(5)
-        raise last_error
-
-    @staticmethod
-    async def verify_upload(client: Client, chat_id: int, 
-                          message_id: int, file_size: int) -> bool:
-        """Verify uploaded file size matches source"""
-        try:
-            message = await client.get_messages(chat_id, message_id)
-            if not message or not message.document:
-                return False
-            return message.document.file_size == file_size
-        except Exception:
-            return False
+    # Increased buffer size for faster uploads (10MB)
+    BUFFER_SIZE = 10 * 1024 * 1024  
 
     @staticmethod
     async def upload_video(client: Client, chat_id: int, 
@@ -53,7 +28,7 @@ class Uploader:
             nonlocal last_progress_update
             now = time.time()
             
-            if now - last_progress_update >= 1:
+            if now - last_progress_update >= 2:  # Reduced frequency for better performance
                 elapsed = now - upload_start_time
                 speed = current / elapsed if elapsed > 0 else 0
                 eta = (total - current) / speed if speed > 0 else 0
@@ -75,7 +50,9 @@ class Uploader:
                 file_name=filename or os.path.basename(video_path),
                 force_document=True,
                 progress=progress,
-                disable_notification=True
+                disable_notification=True,
+                file_size=file_size,     # Helps Pyrogram handle large files better
+                stream=True              # Enables faster upload streaming
             )
 
             # Verify upload
@@ -87,6 +64,7 @@ class Uploader:
         except Exception as e:
             print(f"Upload error: {str(e)}")
             raise Exception(f"Upload failed: {str(e)}")
+
 
     @staticmethod
     async def _upload_single(client: Client, chat_id: int, 
