@@ -53,7 +53,7 @@ class CPUEncoder:
             duration = float(probe['format']['duration'])
             
             # Calculate bitrate for target size
-            video_bitrate = int((params['target_size'] * 8 * 1024 * 1024) / duration)
+            video_bitrate = int((params['target_size'] * 8 * 1024 * 1024 * 1.1) / duration)
             
             # Build encoding parameters
             stream = ffmpeg.input(input_file)
