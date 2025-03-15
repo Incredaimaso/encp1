@@ -258,7 +258,7 @@ class ProcessManager:
         return False
 
     @retry(max_attempts=3, delay=2, backoff=2, exceptions=(Aria2Error, subprocess.SubprocessError))
-    async def start_aria2(self) -> Optional[subprocess.Popen]:
+    async def start_aria2c(self) -> Optional[subprocess.Popen]:
         """Start aria2c daemon with improved settings and robust error handling."""
         process = None
         
