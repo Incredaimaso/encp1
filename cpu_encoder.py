@@ -9,21 +9,21 @@ class CPUEncoder:
     def __init__(self):
         self.quality_params = {
             '480p': {
-                'target_size': 95,  # MB
+                'target_size': 110,  # MB
                 'audio_bitrate': '64k',
                 'height': 480,
                 'crf': 23,
                 'preset': 'medium'
             },
             '720p': {
-                'target_size': 190,
+                'target_size': 210,
                 'audio_bitrate': '96k',
                 'height': 720,
                 'crf': 24,
                 'preset': 'medium'
             },
             '1080p': {
-                'target_size': 285,
+                'target_size': 310,
                 'audio_bitrate': '128k',
                 'height': 1080,
                 'crf': 25,
@@ -53,7 +53,7 @@ class CPUEncoder:
             duration = float(probe['format']['duration'])
             
             # Calculate bitrate for target size
-            video_bitrate = int((params['target_size'] * 8 * 1024 * 1024 * 1.1) / duration)
+            video_bitrate = int((params['target_size'] * 8 * 1024 * 1024 * 0.95) / duration)
             
             # Build encoding parameters
             stream = ffmpeg.input(input_file)

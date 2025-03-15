@@ -26,7 +26,7 @@ class Uploader:
             nonlocal last_progress_update
             now = time.time()
 
-            if now - last_progress_update >= 2:  # Reduced frequency for better performance
+            if now - last_progress_update >= 1:  # Reduced frequency for better performance
                 elapsed = now - upload_start_time
                 speed = current / elapsed if elapsed > 0 else 0
                 eta = (total - current) / speed if speed > 0 else 0
@@ -69,4 +69,4 @@ class Uploader:
 
         finally:
             print("Cleaning up resources...")
-            # Optional cleanup logic if required
+            await asyncio.sleep(1)  # Ensures any pending I/O operations are completed
