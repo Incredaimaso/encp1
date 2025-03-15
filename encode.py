@@ -15,17 +15,17 @@ class VideoEncoder:
         self.quality_params = {
             '480p': {
                 'height': 480,
-                'target_size': 100,
+                'target_size': 110,
                 'audio_bitrate': '64k'
             },
             '720p': {
                 'height': 720,
-                'target_size': 200,
+                'target_size': 210,
                 'audio_bitrate': '96k'
             },
             '1080p': {
                 'height': 1080,
-                'target_size': 300,
+                'target_size': 310,
                 'audio_bitrate': '128k'
             }
         }
@@ -246,7 +246,7 @@ class VideoEncoder:
                         progress = self._estimate_progress(process.stderr)
                         
                         # Get dynamic target size
-                        dynamic_target = max(target_size, current_size * 1.15)
+                        dynamic_target = min(max(target_size, current_size * 1.1), self.MAX_SIZES[resolution])
 
 
                         if current_time - last_progress_time >= self.progress_check_interval:
