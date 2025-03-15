@@ -212,7 +212,7 @@ class VideoEncoder:
                 '-bf', '3',           # Maximum B-frames
                 '-flags', '+cgop',     # Closed GOP
                 '-vf', f'scale=-2:{self.quality_params[resolution]["height"]}:flags=fast_bilinear',
-                '-c:a', 'aac',
+                '-c:a', 'copy',
                 '-b:a', self.quality_params[resolution]['audio_bitrate'],
                 '-ac', '2',
                 '-ar', '48000',

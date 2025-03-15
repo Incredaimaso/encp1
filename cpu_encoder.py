@@ -53,9 +53,7 @@ class CPUEncoder:
             duration = float(probe['format']['duration'])
             
             # Calculate bitrate for target size
-            audio_size = int(params['audio_bitrate'].replace('k', '')) * duration / 8 / 1024  # MB
-            available_size = params['target_size'] - audio_size
-            video_bitrate = int((available_size * 8 * 1024 * 1024) / duration)
+            video_bitrate = int((params['target_size'] * 8 * 1024 * 1024) / duration)
             
             # Build encoding parameters
             stream = ffmpeg.input(input_file)
@@ -75,8 +73,9 @@ class CPUEncoder:
                     'cache-size': self.x264_params['cache-size'],
                     'crf': params['crf'],
                     'vf': f'scale=-2:{params["height"]}:flags=lanczos',  # Better scaling
-                    'c:a': 'aac',
-                    'b:a': params['audio_bitrate'],
+                    'c:a': 'copy',
+                    'c:s': 'copy',
+                    'map': ['0:v', '0:a', '0:s'],
                     'movflags': self.x264_params['movflags'],
                     'y': None,
                     'loglevel': 'error'
