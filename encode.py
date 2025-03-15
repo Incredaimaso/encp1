@@ -15,17 +15,17 @@ class VideoEncoder:
         self.quality_params = {
             '480p': {
                 'height': 480,
-                'target_size': 95,
+                'target_size': 100,
                 'audio_bitrate': '64k'
             },
             '720p': {
                 'height': 720,
-                'target_size': 190,
+                'target_size': 200,
                 'audio_bitrate': '96k'
             },
             '1080p': {
                 'height': 1080,
-                'target_size': 285,
+                'target_size': 300,
                 'audio_bitrate': '128k'
             }
         }
@@ -41,9 +41,9 @@ class VideoEncoder:
         self.process_timeout = 7200  # 2 hours max encoding time
         self.progress_interval = 1  # Check progress every second
         self.MAX_SIZES = {
-            '480p': 105,  # ~100MB + 10% tolerance
-            '720p': 210,  # ~200MB + 10% tolerance
-            '1080p': 315  # ~300MB + 10% tolerance
+            '480p': 120,  # ~100MB + 10% tolerance
+            '720p': 220,  # ~200MB + 10% tolerance
+            '1080p': 335  # ~300MB + 10% tolerance
         }
         self.SIZE_TOLERANCE = 1.1  # Allow 10% over target
         self.last_line_length = 0  # For single-line updates
@@ -130,7 +130,7 @@ class VideoEncoder:
 
     def _calculate_target_size(self, input_size: float, resolution: str) -> float:
         """Calculate target size based on input size and quality"""
-        max_sizes = {'480p': 95, '720p': 190, '1080p': 290}  # Slightly below limits
+        max_sizes = {'480p': 105, '720p': 190, '1080p': 290}  # Slightly below limits
         
         if resolution == '480p':
             target = min(input_size * 0.35, max_sizes['480p'])  # 35% of original
@@ -246,9 +246,8 @@ class VideoEncoder:
                         progress = self._estimate_progress(process.stderr)
                         
                         # Get dynamic target size
-                        dynamic_target = self._calculate_dynamic_target(
-                            current_size, progress, current_size, target_size
-                        )
+                        dynamic_target = max(target_size, current_size * 1.15)
+
 
                         if current_time - last_progress_time >= self.progress_check_interval:
                             speed = current_size / elapsed if elapsed > 0 else 0
