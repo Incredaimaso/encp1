@@ -1,9 +1,9 @@
 try:
-    from pyrogram import Client, filters, enums  # Add enums import
+    from pyrogram import Client, filters, enums
 except ImportError:
-    # Alternative import path
     from pyrogram.client import Client
-    from pyrogram.filters import filters
+    from pyrogram import filters
+    from pyrogram import enums
 
 import asyncio
 import backoff
@@ -11,13 +11,13 @@ from config import Config
 from handlers import Handlers
 from queue_manager import QueueManager
 from users import UserManager
-from downloaders import Downloader
-from encode import VideoEncoder
 import time
 from pyrogram.errors import FloodWait
 import os
 from datetime import datetime
 import pytz
+from logger import BotLogger  # Add logger import
+from typing import Dict, Any, Optional  # Add typing imports
 
 class BotManager:
     def __init__(self, process_func):

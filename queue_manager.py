@@ -1,13 +1,14 @@
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque
+from typing import Any, Deque, Dict
 import asyncio
 import os
 import backoff
-from time import sleep
+from time import sleep, time
 import uuid
-import time
 from logger import BotLogger
+from config import Config  # Add Config import
+from display import ProgressTracker  # Add progress tracker import
 
 @dataclass
 class QueueItem:
@@ -19,6 +20,13 @@ class QueueItem:
     task_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     status: str = "queued"
     cancel_flag: bool = False
+    use_hevc: bool = False  # Add HEVC flag
+    
+    def __post_init__(self):
+        if self.use_hevc:
+            # Modify filename for HEVC
+            base, ext = os.path.splitext(self.file_path)
+            self.file_path = f"{base}_hevc{ext}"
 
 class QueueManager:
     def __init__(self):
